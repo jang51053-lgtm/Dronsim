@@ -25,6 +25,110 @@ html, body {
   height: 100%;
 }
 
+#startScreen {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 30%, #2a3b52, #0a0f1a 75%);
+}
+
+.start-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 32px 28px;
+  width: min(90vw, 340px);
+  color: #fff;
+  text-align: center;
+}
+
+.start-card h1 {
+  font-size: 22px;
+  margin-bottom: 2px;
+}
+
+.start-card p {
+  color: rgba(255,255,255,0.6);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.mode-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: linear-gradient(180deg, #3a4a63, #263449);
+  color: #fff;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.mode-btn:hover {
+  border-color: rgba(255,255,255,0.4);
+  background: linear-gradient(180deg, #45577a, #2c3c54);
+}
+
+.mode-btn strong {
+  font-size: 15px;
+}
+
+.mode-btn span {
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+}
+
+#btnMenu {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(20,22,26,0.55);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#missionPanel {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  min-width: 220px;
+  max-width: 80vw;
+  padding: 10px 18px;
+  border-radius: 10px;
+  background: rgba(15,17,20,0.55);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: #fff;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+}
+
+#missionTitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+  letter-spacing: 0.04em;
+}
+
+#missionDesc {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
 #hud {
   position: absolute;
   top: 16px;

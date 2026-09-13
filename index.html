@@ -10,6 +10,28 @@
   <div id="app">
     <canvas id="scene"></canvas>
 
+    <div id="startScreen">
+      <div class="start-card">
+        <h1>드론 비행 시뮬레이션</h1>
+        <p>모드를 선택하세요</p>
+        <button id="btnModeTraining" class="mode-btn">
+          <strong>비행 훈련</strong>
+          <span>초록 훈련장 · 링 통과 + 착륙 미션</span>
+        </button>
+        <button id="btnModeCity" class="mode-btn">
+          <strong>자유 비행</strong>
+          <span>도시 맵을 자유롭게 탐험</span>
+        </button>
+      </div>
+    </div>
+
+    <button id="btnMenu" hidden>메뉴로</button>
+
+    <div id="missionPanel" hidden>
+      <div id="missionTitle">미션</div>
+      <div id="missionDesc">-</div>
+    </div>
+
     <div id="hud">
       <div class="hud-bar">
         <span class="hud-label">배터리</span>
