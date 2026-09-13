@@ -7,11 +7,11 @@ import { Joystick } from './joystick.js';
 
 // ---- 드론 스탯 (균형형 기본기, PRD 3.1) ----
 const DRONE_STATS = {
-  maxSpeed: 9,        // m/s
-  accel: 14,          // m/s^2
+  maxSpeed: 32,       // m/s
+  accel: 50,          // m/s^2
   damping: 4,         // 관성 감쇠
-  yawSpeed: 2.2,       // rad/s
-  vertSpeed: 5,        // m/s
+  yawSpeed: 2.6,       // rad/s
+  vertSpeed: 18,       // m/s
   batteryDrainPerSec: 100 / 90, // 90초에 완전 방전
 };
 
@@ -214,6 +214,10 @@ new MTLLoader().load(
           obj.position.x -= (box.min.x + box.max.x) / 2;
           obj.position.z -= (box.min.z + box.max.z) / 2;
           obj.position.y -= box.min.y;
+          // position을 바꾼 뒤에도 matrixWorld는 갱신되지 않으므로, 이 상태로
+          // Box3.setFromObject(child)를 호출하면 부모(obj)의 이전 위치가
+          // 반영된 엉뚱한 좌표가 나온다 — 충돌 박스 계산 전에 강제로 갱신.
+          obj.updateMatrixWorld(true);
           obj.traverse((c) => {
             if (c.isMesh) {
               c.castShadow = true;
@@ -280,7 +284,9 @@ function updateDrone(dt) {
   state.yaw -= yawInput * DRONE_STATS.yawSpeed * dt;
 
   const forward = new THREE.Vector3(Math.sin(state.yaw), 0, Math.cos(state.yaw));
-  const right = new THREE.Vector3(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
+  // 카메라가 드론 "뒤"에서 forward 방향을 바라보므로, 화면상 오른쪽은
+  // cross(forward, up) 방향이다 (기존 부호는 반대라 좌우가 뒤집혀 있었음).
+  const right = new THREE.Vector3(-Math.cos(state.yaw), 0, Math.sin(state.yaw));
 
   const desired = new THREE.Vector3();
   desired.addScaledVector(forward, pitchInput * DRONE_STATS.maxSpeed);
@@ -325,9 +331,9 @@ const CAM_UP_AXIS = new THREE.Vector3(0, 1, 0);
 
 function updateCamera(dt) {
   // 드론이 바라보는 방향(forward)의 반대쪽, 즉 "뒤"에 카메라를 둬야 추격 시점이 된다.
-  const camOffset = new THREE.Vector3(0, 5, -14).applyAxisAngle(CAM_UP_AXIS, state.yaw);
+  const camOffset = new THREE.Vector3(0, 6, -18).applyAxisAngle(CAM_UP_AXIS, state.yaw);
   desiredCamPos.copy(drone.position).add(camOffset);
-  camera.position.lerp(desiredCamPos, Math.min(1, 5 * dt));
+  camera.position.lerp(desiredCamPos, Math.min(1, 6 * dt));
   camLookTarget.copy(drone.position).add(new THREE.Vector3(0, 1, 0));
   camera.lookAt(camLookTarget);
 }
