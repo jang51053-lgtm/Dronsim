@@ -15,7 +15,6 @@ const DRONE_STATS = {
   batteryDrainPerSec: 100 / 90, // 90초에 완전 방전
 };
 
-const CITY_MAP_SCALE = 45;     // 도시 맵 에셋이 정규화 좌표라 스케일 업
 const DRONE_TARGET_SIZE = 3;   // 드론 모델의 최대 치수를 이 값(미터)에 맞춰 정규화
 const DRONE_RADIUS = 1.1;      // 충돌 판정용 드론 반경
 
@@ -329,62 +328,274 @@ function startGame(mode) {
     };
   }
 
-  function loadCityMap() {
-    drone.position.set(0, 55, 60);
+  // ---- 도심 맵 (모듈형 도시 키트로 직접 조립) ----
 
-    const fallbackGround = new THREE.Mesh(
-      new THREE.PlaneGeometry(400, 400),
-      new THREE.MeshStandardMaterial({ color: 0x4a7c3a })
-    );
-    fallbackGround.rotation.x = -Math.PI / 2;
-    fallbackGround.receiveShadow = true;
-    scene.add(fallbackGround);
+  // 오브젝트를 지정한 치수에 맞춰 균일 스케일하고, 밑면이 y=0 / 가로세로 중심이
+  // (0,0)에 오도록 자식으로 감싼 래퍼 그룹을 반환한다. 이후 이 래퍼를 clone해서
+  // wrapper.position.set(x, 지면높이, z)만 하면 정확히 바닥에 붙는다.
+  // (재배치 오프셋을 원본 오브젝트의 position에 직접 넣으면, 나중에 배치할 때
+  // 그 position을 다시 덮어써서 오프셋이 날아가 버리므로 래퍼로 분리해야 한다.)
+  // 원본 에셋마다 피벗 위치/스케일이 제각각이라 (export 파이프라인이 달라 원점이
+  // sheet 배치 좌표에 남아있기도 함) 매번 이렇게 정규화해야 안전하다.
+  function wrapNormalized(obj, targetDim, axis) {
+    const box0 = new THREE.Box3().setFromObject(obj);
+    const size0 = box0.getSize(new THREE.Vector3());
+    const raw = axis === 'y' ? size0.y : Math.max(size0.x, size0.z);
+    const scale = raw > 1e-6 ? targetDim / raw : 1;
+    return wrapRescaled(obj, scale);
+  }
 
-    new MTLLoader().load(
-      assetUrl('assets/map.mtl'),
-      (materials) => {
-        materials.preload();
-        new OBJLoader()
-          .setMaterials(materials)
-          .load(
-            assetUrl('assets/map.obj'),
-            (obj) => {
-              obj.scale.setScalar(CITY_MAP_SCALE);
-              obj.updateMatrixWorld(true);
-              const box = new THREE.Box3().setFromObject(obj);
-              obj.position.x -= (box.min.x + box.max.x) / 2;
-              obj.position.z -= (box.min.z + box.max.z) / 2;
-              obj.position.y -= box.min.y;
-              // position을 바꾼 뒤에도 matrixWorld는 갱신되지 않으므로, 이 상태로
-              // Box3.setFromObject(child)를 호출하면 부모(obj)의 이전 위치가
-              // 반영된 엉뚱한 좌표가 나온다 — 충돌 박스 계산 전에 강제로 갱신.
-              obj.updateMatrixWorld(true);
-              obj.traverse((c) => {
-                if (c.isMesh) {
-                  c.castShadow = true;
-                  c.receiveShadow = true;
-                }
-              });
-              scene.add(obj);
-              fallbackGround.visible = false;
-              for (const child of obj.children) {
-                const b = new THREE.Box3().setFromObject(child);
-                if (!b.isEmpty()) collisionBoxes.push(b);
-              }
-            },
-            undefined,
-            (err) => console.error('맵 로드 실패', err)
-          );
-      },
-      undefined,
-      (err) => console.error('맵 머티리얼 로드 실패', err)
+  function wrapRescaled(obj, scale) {
+    obj.scale.multiplyScalar(scale);
+    obj.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj);
+    const center = box.getCenter(new THREE.Vector3());
+    obj.position.x -= center.x;
+    obj.position.z -= center.z;
+    obj.position.y -= box.min.y;
+    const wrapper = new THREE.Group();
+    wrapper.add(obj);
+    return wrapper;
+  }
+
+  function placeInstance(template, x, z, y = 0, rotY = 0) {
+    const inst = template.clone(true);
+    inst.position.set(x, y, z);
+    inst.rotation.y = rotY;
+    inst.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+    scene.add(inst);
+    return inst;
+  }
+
+  async function buildModularCity() {
+    const cityUrl = (f) => assetUrl(`assets/city/${f}`);
+    const loader = new GLTFLoader();
+    const load = (file) => loader.loadAsync(cityUrl(file)).then((gltf) => gltf.scene);
+
+    let [big, brown, green, redCorner, red, roadBits, tree, bench, trafficLight, mailbox, trashCan, fireHydrant, busStop, planter, car, van, bus] =
+      await Promise.all([
+        load('big-building.glb'), load('brown-building.glb'), load('building-green.glb'),
+        load('building-red-corner.glb'), load('building-red.glb'), load('road-bits.glb'),
+        load('tree.glb'), load('bench.glb'), load('traffic-light.glb'), load('mailbox.glb'),
+        load('trash-can.glb'), load('fire-hydrant.glb'), load('bus-stop.glb'), load('planter.glb'),
+        load('car.glb'), load('van.glb'), load('bus.glb'),
+      ]).catch((err) => {
+        console.error('도시 에셋 로드 실패', err);
+        return [];
+      });
+
+    if (!big) return; // 로드 실패 시 빈 도시로 두지 않고 중단 (콘솔에 에러 출력됨)
+
+    // ---- 건물 (스카이라인용으로 높이를 다양하게) ----
+    const buildingDefs = [
+      { obj: big, height: 34 },
+      { obj: brown, height: 16 },
+      { obj: green, height: 20 },
+      { obj: redCorner, height: 18 },
+      { obj: red, height: 14 },
+    ];
+    for (const def of buildingDefs) def.obj = wrapNormalized(def.obj, def.height, 'y');
+
+    // ---- 도로 타일: road_straight 기준으로 스케일을 정하고 세트 전체에 동일 적용 ----
+    const TILE_LENGTH = 14;
+    const rawStraight = roadBits.getObjectByName('road_straight');
+    const rawBox = new THREE.Box3().setFromObject(rawStraight);
+    const rawSize = rawBox.getSize(new THREE.Vector3());
+    const rawMax = Math.max(rawSize.x, rawSize.z);
+    const roadScale = rawMax > 1e-6 ? TILE_LENGTH / rawMax : 1;
+
+    const roadNames = ['road_straight', 'road_junction', 'road_corner', 'road_tsplit', 'road_straight_crossing', 'road_corner_curved'];
+    const roadTemplates = {};
+    for (const name of roadNames) {
+      const src = roadBits.getObjectByName(name);
+      if (!src) continue;
+      roadTemplates[name] = wrapRescaled(src.clone(true), roadScale);
+    }
+    const straightSize = new THREE.Box3().setFromObject(roadTemplates.road_straight).getSize(new THREE.Vector3());
+    const ROAD_WIDTH = Math.min(straightSize.x, straightSize.z);
+    const straightAxisIsX = straightSize.x >= straightSize.z; // 기본 방향이 X축인지
+
+    // ---- 소품/차량 정규화 (사람 눈에 자연스러운 높이로) ----
+    tree = wrapNormalized(tree, 7, 'y');
+    bench = wrapNormalized(bench, 1, 'y');
+    trafficLight = wrapNormalized(trafficLight, 4.5, 'y');
+    mailbox = wrapNormalized(mailbox, 1.2, 'y');
+    trashCan = wrapNormalized(trashCan, 1, 'y');
+    fireHydrant = wrapNormalized(fireHydrant, 0.8, 'y');
+    busStop = wrapNormalized(busStop, 2.6, 'y');
+    planter = wrapNormalized(planter, 0.9, 'y');
+    car = wrapNormalized(car, 1.5, 'y');
+    van = wrapNormalized(van, 2, 'y');
+    bus = wrapNormalized(bus, 3, 'y');
+    const propTemplates = [tree, bench, trafficLight, mailbox, trashCan, fireHydrant, busStop, planter];
+    const vehicleTemplates = [car, van, bus];
+
+    // ---- 지면 ----
+    const CITY_EXTENT = 260;
+    const groundMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(CITY_EXTENT, CITY_EXTENT),
+      new THREE.MeshStandardMaterial({ color: 0x6b6f76 })
     );
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+    collisionBoxes.push(new THREE.Box3(
+      new THREE.Vector3(-CITY_EXTENT, -20, -CITY_EXTENT),
+      new THREE.Vector3(CITY_EXTENT, 0, CITY_EXTENT)
+    ));
+
+    // ---- 도로/블록 격자 배치 ----
+    const BLOCKS = 5;
+    const CELL = 30;
+    const SPACING = CELL + ROAD_WIDTH;
+    const roadLineCount = BLOCKS + 1;
+    const roadPositions = [];
+    for (let i = 0; i < roadLineCount; i++) {
+      roadPositions.push((i - BLOCKS / 2) * SPACING);
+    }
+    const cityMin = roadPositions[0] - ROAD_WIDTH / 2;
+    const cityMax = roadPositions[roadPositions.length - 1] + ROAD_WIDTH / 2;
+
+    function isCrossing(pos) {
+      return roadPositions.some((p) => Math.abs(p - pos) < 0.01);
+    }
+
+    // 가로(고정 Z) 도로들
+    for (const z of roadPositions) {
+      for (let x = cityMin + TILE_LENGTH / 2; x < cityMax; x += TILE_LENGTH) {
+        const rotY = straightAxisIsX ? 0 : Math.PI / 2;
+        if (isCrossing(x)) {
+          placeInstance(roadTemplates.road_junction, x, z, 0.02, 0);
+        } else {
+          placeInstance(roadTemplates.road_straight, x, z, 0.02, rotY);
+        }
+      }
+    }
+    // 세로(고정 X) 도로들 (교차점은 이미 위에서 깔림)
+    for (const x of roadPositions) {
+      for (let z = cityMin + TILE_LENGTH / 2; z < cityMax; z += TILE_LENGTH) {
+        if (isCrossing(z)) continue;
+        const rotY = straightAxisIsX ? Math.PI / 2 : 0;
+        placeInstance(roadTemplates.road_straight, x, z, 0.02, rotY);
+      }
+    }
+
+    // ---- 블록 채우기 (건물 + 소품), 일부 블록은 광장으로 비워둠 ----
+    let buildingCounter = 0;
+    const plazaBlocks = [];
+    for (let bi = 0; bi < BLOCKS; bi++) {
+      for (let bj = 0; bj < BLOCKS; bj++) {
+        const cx = (roadPositions[bi] + roadPositions[bi + 1]) / 2;
+        const cz = (roadPositions[bj] + roadPositions[bj + 1]) / 2;
+        const isPlaza = (bi === 1 && bj === 1) || (bi === 3 && bj === 3);
+
+        if (isPlaza) {
+          plazaBlocks.push({ x: cx, z: cz });
+          for (let k = 0; k < 4; k++) {
+            const ang = (k / 4) * Math.PI * 2 + 0.3;
+            const px = cx + Math.cos(ang) * (CELL * 0.32);
+            const pz = cz + Math.sin(ang) * (CELL * 0.32);
+            placeInstance(propTemplates[k % propTemplates.length], px, pz, 0, Math.random() * Math.PI * 2);
+          }
+          continue;
+        }
+
+        const def = buildingDefs[buildingCounter % buildingDefs.length];
+        buildingCounter += 1;
+        const rotY = Math.round(Math.random() * 3) * (Math.PI / 2);
+        const offsetX = (Math.random() - 0.5) * CELL * 0.15;
+        const offsetZ = (Math.random() - 0.5) * CELL * 0.15;
+        const inst = placeInstance(def.obj, cx + offsetX, cz + offsetZ, 0, rotY);
+        inst.updateMatrixWorld(true);
+        const b = new THREE.Box3().setFromObject(inst);
+        if (!b.isEmpty()) collisionBoxes.push(b);
+
+        // 인도 쪽에 소품 한두 개
+        if (Math.random() < 0.6) {
+          const propTpl = propTemplates[Math.floor(Math.random() * propTemplates.length)];
+          const edgeX = cx + (Math.random() - 0.5) * CELL * 0.9;
+          const edgeZ = cz + (bj === 0 ? -1 : 1) * CELL * 0.46;
+          placeInstance(propTpl, edgeX, edgeZ, 0, Math.random() * Math.PI * 2);
+        }
+      }
+    }
+
+    // 도로 옆 주차 차량 몇 대
+    for (let n = 0; n < 10; n++) {
+      const laneZ = roadPositions[1 + (n % (roadPositions.length - 2))];
+      const x = cityMin + TILE_LENGTH + Math.random() * (cityMax - cityMin - TILE_LENGTH * 2);
+      const offset = ROAD_WIDTH * 0.28;
+      placeInstance(
+        vehicleTemplates[n % vehicleTemplates.length],
+        x, laneZ + (n % 2 === 0 ? offset : -offset), 0,
+        straightAxisIsX ? 0 : Math.PI / 2
+      );
+    }
+
+    // ---- 드론 스폰: 도시 남쪽 상공 ----
+    drone.position.set(0, 24, cityMax + 20);
+
+    // ---- 배송 미션 ----
+    const pickup = plazaBlocks[0] || { x: 0, z: 0 };
+    const dropoff = plazaBlocks[1] || { x: CELL, z: CELL };
+    const pickupBeacon = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.3, 0),
+      new THREE.MeshStandardMaterial({ color: 0x2196f3, emissive: 0x1565c0, emissiveIntensity: 0.7 })
+    );
+    pickupBeacon.position.set(pickup.x, 8, pickup.z);
+    scene.add(pickupBeacon);
+
+    const dropoffBeacon = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.3, 0),
+      new THREE.MeshStandardMaterial({ color: 0xff7043, emissive: 0xd84315, emissiveIntensity: 0.7 })
+    );
+    dropoffBeacon.position.set(dropoff.x, 8, dropoff.z);
+    dropoffBeacon.visible = false;
+    scene.add(dropoffBeacon);
+
+    const packageMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.5, 0.6),
+      new THREE.MeshStandardMaterial({ color: 0xa1662f })
+    );
+    packageMesh.position.set(0, -1, 0);
+    packageMesh.visible = false;
+    drone.add(packageMesh);
+
+    const delivery = { stage: 'pickup' };
+    setMissionText('배송 미션 · 픽업', '파란 구슬(픽업 지점)으로 이동하세요');
+    missionPanel.hidden = false;
+
+    updateMissions = (dt) => {
+      pickupBeacon.rotation.y += dt;
+      dropoffBeacon.rotation.y += dt;
+      pickupBeacon.position.y = 8 + Math.sin(clock.elapsedTime * 2) * 0.4;
+      dropoffBeacon.position.y = 8 + Math.sin(clock.elapsedTime * 2 + 1) * 0.4;
+
+      if (delivery.stage === 'pickup') {
+        const d = drone.position.distanceTo(pickupBeacon.position);
+        if (d < 4) {
+          delivery.stage = 'dropoff';
+          pickupBeacon.visible = false;
+          dropoffBeacon.visible = true;
+          packageMesh.visible = true;
+          setMissionText('배송 미션 · 배달', '주황 구슬(배달 지점)까지 옮겨주세요');
+        }
+      } else if (delivery.stage === 'dropoff') {
+        const d = drone.position.distanceTo(dropoffBeacon.position);
+        if (d < 4) {
+          delivery.stage = 'done';
+          dropoffBeacon.visible = false;
+          packageMesh.visible = false;
+          setMissionText('배송 완료', '물건을 목적지까지 무사히 옮겼습니다');
+        }
+      }
+    };
   }
 
   if (mode === 'training') {
     buildTrainingField();
   } else {
-    loadCityMap();
+    buildModularCity();
   }
 
   // ---- 입력 통합 (키보드 + 조이스틱) ----
@@ -472,7 +683,7 @@ function startGame(mode) {
       state.crashed = true;
     }
 
-    updateMissions();
+    updateMissions(dt);
 
     const speedKmh = state.velocity.length() * 3.6;
     batteryFill.style.width = `${state.battery}%`;
