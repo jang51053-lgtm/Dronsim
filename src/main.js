@@ -208,10 +208,6 @@ function startGame(mode) {
     groundMesh.receiveShadow = true;
     scene.add(groundMesh);
 
-    const grid = new THREE.GridHelper(groundSize, 40, 0x2e7d32, 0x3a8f3e);
-    grid.position.y = 0.02;
-    scene.add(grid);
-
     // 바닥을 하나의 충돌 박스로 등록 (드론 반경만큼 위에서 멈춤)
     collisionBoxes.push(new THREE.Box3(
       new THREE.Vector3(-groundSize, -20, -groundSize),
@@ -221,16 +217,17 @@ function startGame(mode) {
     drone.position.set(0, DRONE_RADIUS, 0);
     camera.position.set(0, DRONE_RADIUS + 4, -16);
 
-    // ---- 링 코스 ----
-    const ringDefs = [
-      { pos: new THREE.Vector3(0, 6, 20) },
-      { pos: new THREE.Vector3(8, 10, 40) },
-      { pos: new THREE.Vector3(-8, 14, 60) },
-      { pos: new THREE.Vector3(0, 10, 80) },
-      { pos: new THREE.Vector3(0, 6, 100) },
+    // ---- 링 코스 (좌우/고도 변화를 크게 줘서 진짜로 방향을 틀어야 통과 가능) ----
+    const ringPositions = [
+      new THREE.Vector3(0, 8, 22),
+      new THREE.Vector3(14, 12, 42),
+      new THREE.Vector3(-16, 18, 60),
+      new THREE.Vector3(12, 24, 82),
+      new THREE.Vector3(-10, 14, 104),
+      new THREE.Vector3(8, 20, 124),
+      new THREE.Vector3(0, 10, 146),
     ];
-    const ringNormal = new THREE.Vector3(0, 0, 1); // 모든 링이 +Z를 향해 뚫려있음
-    const ringRadius = 4;
+    const ringRadius = 2.4; // 좁게 만들어서 정밀 조작이 필요하도록
 
     const ringMaterials = {
       pending: new THREE.MeshStandardMaterial({ color: 0x89c4f4, transparent: true, opacity: 0.45 }),
@@ -238,18 +235,24 @@ function startGame(mode) {
       cleared: new THREE.MeshStandardMaterial({ color: 0x4caf50, emissive: 0x2e7d32, emissiveIntensity: 0.3 }),
     };
 
-    const rings = ringDefs.map((def) => {
-      const geo = new THREE.TorusGeometry(ringRadius, 0.35, 12, 32);
+    const zAxis = new THREE.Vector3(0, 0, 1);
+    let prevPos = new THREE.Vector3(0, ringPositions[0].y, 0);
+    const rings = ringPositions.map((pos) => {
+      const normal = pos.clone().sub(prevPos).normalize();
+      prevPos = pos;
+
+      const geo = new THREE.TorusGeometry(ringRadius, 0.3, 12, 32);
       const mesh = new THREE.Mesh(geo, ringMaterials.pending);
-      mesh.position.copy(def.pos);
+      mesh.position.copy(pos);
+      mesh.quaternion.setFromUnitVectors(zAxis, normal);
       mesh.castShadow = true;
       scene.add(mesh);
-      return { mesh, center: def.pos.clone(), normal: ringNormal.clone(), radius: ringRadius, cleared: false };
+      return { mesh, center: pos.clone(), normal, radius: ringRadius, cleared: false };
     });
 
     // ---- 착륙장 ----
-    const padCenter = new THREE.Vector3(0, 0, 130);
-    const padRadius = 6;
+    const padCenter = new THREE.Vector3(0, 0, 175);
+    const padRadius = 4.5;
 
     const padCanvas = document.createElement('canvas');
     padCanvas.width = 256;
