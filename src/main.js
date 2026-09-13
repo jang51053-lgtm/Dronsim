@@ -15,8 +15,9 @@ const DRONE_STATS = {
   batteryDrainPerSec: 100 / 90, // 90초에 완전 방전
 };
 
-const MAP_SCALE = 12;    // 맵 에셋이 정규화 좌표라 스케일 업
-const DRONE_TARGET_SIZE = 1.4; // 드론 모델의 최대 치수를 이 값(미터)에 맞춰 정규화
+const MAP_SCALE = 45;    // 맵 에셋이 정규화 좌표라 스케일 업 (도시 안을 돌아다닐 수 있는 크기)
+const DRONE_TARGET_SIZE = 3;   // 드론 모델의 최대 치수를 이 값(미터)에 맞춰 정규화
+const DRONE_RADIUS = 1.1;      // 충돌 판정용 드론 반경
 
 // GitHub Pages 같은 서브경로 배포에서도 에셋을 찾도록 base 경로를 붙인다.
 const ASSET_BASE = import.meta.env.BASE_URL;
@@ -45,14 +46,14 @@ renderer.shadowMap.enabled = true;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8fd0ff);
-scene.fog = new THREE.Fog(0x8fd0ff, 60, 220);
+scene.fog = new THREE.Fog(0x8fd0ff, 160, 620);
 
 const pmremGenerator = new THREE.PMREMGenerator(renderer);
 scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
 pmremGenerator.dispose();
 
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 3, 8);
+const camera = new THREE.PerspectiveCamera(78, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.position.set(0, 6, -16);
 
 const hemiLight = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
 scene.add(hemiLight);
@@ -81,7 +82,7 @@ scene.add(ground);
 // ---- 드론 로드 ----
 let drone = new THREE.Group();
 scene.add(drone);
-drone.position.set(0, 16, 22);
+drone.position.set(0, 55, 60);
 
 const rotors = [];
 
@@ -157,6 +158,46 @@ function loadDroneObjFallback() {
   );
 }
 
+// ---- 충돌 판정 (건물/지형 박스) ----
+const buildingBoxes = [];
+
+function buildCollisionBoxes(mapRoot) {
+  for (const child of mapRoot.children) {
+    const box = new THREE.Box3().setFromObject(child);
+    if (box.isEmpty()) continue;
+    buildingBoxes.push(box);
+  }
+}
+
+function resolveCollisions(position, velocity, radius) {
+  for (const box of buildingBoxes) {
+    const closestX = THREE.MathUtils.clamp(position.x, box.min.x, box.max.x);
+    const closestY = THREE.MathUtils.clamp(position.y, box.min.y, box.max.y);
+    const closestZ = THREE.MathUtils.clamp(position.z, box.min.z, box.max.z);
+    const dx = position.x - closestX;
+    const dy = position.y - closestY;
+    const dz = position.z - closestZ;
+    const distSq = dx * dx + dy * dy + dz * dz;
+    if (distSq >= radius * radius || distSq < 1e-8) continue;
+
+    const dist = Math.sqrt(distSq);
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const nz = dz / dist;
+    const penetration = radius - dist;
+    position.x += nx * penetration;
+    position.y += ny * penetration;
+    position.z += nz * penetration;
+
+    const vDotN = velocity.x * nx + velocity.y * ny + velocity.z * nz;
+    if (vDotN < 0) {
+      velocity.x -= vDotN * nx;
+      velocity.y -= vDotN * ny;
+      velocity.z -= vDotN * nz;
+    }
+  }
+}
+
 // ---- 맵 로드 ----
 new MTLLoader().load(
   assetUrl('assets/map.mtl'),
@@ -181,7 +222,8 @@ new MTLLoader().load(
           });
           scene.add(obj);
           ground.visible = false;
-          console.log('맵 로드 완료 (높이 범위 0 ~', (box.max.y - box.min.y).toFixed(1), ')');
+          buildCollisionBoxes(obj);
+          console.log('맵 로드 완료 (높이 범위 0 ~', (box.max.y - box.min.y).toFixed(1), '), 충돌 박스', buildingBoxes.length, '개');
         },
         undefined,
         (err) => console.error('맵 로드 실패', err)
@@ -251,8 +293,9 @@ function updateDrone(dt) {
   }
 
   drone.position.addScaledVector(state.velocity, dt);
-  if (drone.position.y < 0.3) {
-    drone.position.y = 0.3;
+  resolveCollisions(drone.position, state.velocity, DRONE_RADIUS);
+  if (drone.position.y < -5) {
+    drone.position.y = -5;
     state.velocity.y = Math.max(0, state.velocity.y);
   }
 
@@ -274,15 +317,18 @@ function updateDrone(dt) {
 
   const speedKmh = state.velocity.length() * 3.6;
   batteryFill.style.width = `${state.battery}%`;
-  altitudeFill.style.width = `${Math.min(100, (drone.position.y / 20) * 100)}%`;
+  altitudeFill.style.width = `${Math.min(100, Math.max(0, drone.position.y / 70) * 100)}%`;
   speedReadout.textContent = `${speedKmh.toFixed(0)} km/h`;
 }
 
+const CAM_UP_AXIS = new THREE.Vector3(0, 1, 0);
+
 function updateCamera(dt) {
-  const camOffset = new THREE.Vector3(0, 2.2, 6).applyAxisAngle(new THREE.Vector3(0, 1, 0), state.yaw);
+  // 드론이 바라보는 방향(forward)의 반대쪽, 즉 "뒤"에 카메라를 둬야 추격 시점이 된다.
+  const camOffset = new THREE.Vector3(0, 5, -14).applyAxisAngle(CAM_UP_AXIS, state.yaw);
   desiredCamPos.copy(drone.position).add(camOffset);
   camera.position.lerp(desiredCamPos, Math.min(1, 5 * dt));
-  camLookTarget.copy(drone.position).add(new THREE.Vector3(0, 0.6, 0));
+  camLookTarget.copy(drone.position).add(new THREE.Vector3(0, 1, 0));
   camera.lookAt(camLookTarget);
 }
 
