@@ -17,6 +17,10 @@ html, body {
   position: relative;
   width: 100vw;
   height: 100vh;
+  /* 모바일/태블릿 브라우저는 주소창이 늘었다 줄었다 하면서 100vh가
+     실제로 보이는 영역보다 커지는 경우가 많아 조종기가 화면 밖으로
+     밀려 잘린다 — 100svh(항상 보장되는 최소 뷰포트)를 우선 사용. */
+  height: 100svh;
 }
 
 #scene {
@@ -177,6 +181,12 @@ html, body {
   background: linear-gradient(90deg, #3498db, #2980b9);
 }
 
+.hud-value {
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 34px;
+}
+
 #speedReadout {
   margin-top: 4px;
   font-size: 16px;
@@ -204,9 +214,11 @@ html, body {
   right: 0;
   bottom: 0;
   height: min(24vh, 190px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   display: flex;
   justify-content: center;
   pointer-events: none;
+  box-sizing: content-box;
 }
 
 .rc-body {

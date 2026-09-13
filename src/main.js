@@ -25,6 +25,8 @@ const assetUrl = (path) => `${ASSET_BASE}${path}`;
 const state = {
   velocity: new THREE.Vector3(),
   yaw: 0,
+  pitchTilt: 0,
+  rollTilt: 0,
   battery: 100,
   crashed: false,
   keys: {},
@@ -444,6 +446,31 @@ function startGame(mode) {
       new THREE.Vector3(CITY_EXTENT, 0, CITY_EXTENT)
     ));
 
+    // ---- 충전 스테이션 표시(바닥 패드) ----
+    const chargeCanvas = document.createElement('canvas');
+    chargeCanvas.width = 256;
+    chargeCanvas.height = 256;
+    const chargeCtx = chargeCanvas.getContext('2d');
+    chargeCtx.fillStyle = '#e8e8e8';
+    chargeCtx.beginPath();
+    chargeCtx.arc(128, 128, 120, 0, Math.PI * 2);
+    chargeCtx.fill();
+    chargeCtx.strokeStyle = '#43a047';
+    chargeCtx.lineWidth = 12;
+    chargeCtx.stroke();
+    chargeCtx.fillStyle = '#43a047';
+    chargeCtx.beginPath();
+    chargeCtx.moveTo(150, 30);
+    chargeCtx.lineTo(95, 140);
+    chargeCtx.lineTo(125, 140);
+    chargeCtx.lineTo(105, 220);
+    chargeCtx.lineTo(168, 108);
+    chargeCtx.lineTo(136, 108);
+    chargeCtx.closePath();
+    chargeCtx.fill();
+    const chargeTexture = new THREE.CanvasTexture(chargeCanvas);
+    const CHARGE_PAD_RADIUS = 6;
+
     // ---- 도로/블록 격자 배치 ----
     const BLOCKS = 5;
     const CELL = 30;
@@ -480,14 +507,28 @@ function startGame(mode) {
       }
     }
 
-    // ---- 블록 채우기 (건물 + 소품), 일부 블록은 광장으로 비워둠 ----
+    // ---- 블록 채우기 (건물 + 소품), 광장/충전 스테이션 블록은 비워둠 ----
     let buildingCounter = 0;
     const plazaBlocks = [];
+    let stationCenter = null;
     for (let bi = 0; bi < BLOCKS; bi++) {
       for (let bj = 0; bj < BLOCKS; bj++) {
         const cx = (roadPositions[bi] + roadPositions[bi + 1]) / 2;
         const cz = (roadPositions[bj] + roadPositions[bj + 1]) / 2;
         const isPlaza = (bi === 1 && bj === 1) || (bi === 3 && bj === 3);
+        const isStation = bi === 2 && bj === 0;
+
+        if (isStation) {
+          stationCenter = { x: cx, z: cz };
+          const chargeMesh = new THREE.Mesh(
+            new THREE.CircleGeometry(CHARGE_PAD_RADIUS, 32),
+            new THREE.MeshStandardMaterial({ map: chargeTexture })
+          );
+          chargeMesh.rotation.x = -Math.PI / 2;
+          chargeMesh.position.set(cx, 0.03, cz);
+          scene.add(chargeMesh);
+          continue;
+        }
 
         if (isPlaza) {
           plazaBlocks.push({ x: cx, z: cz });
@@ -532,8 +573,9 @@ function startGame(mode) {
       );
     }
 
-    // ---- 드론 스폰: 도시 남쪽 상공 ----
-    drone.position.set(0, 24, cityMax + 20);
+    // ---- 드론 스폰: 충전 스테이션(출발지)에 착륙한 상태로 시작 ----
+    drone.position.set(stationCenter.x, DRONE_RADIUS, stationCenter.z);
+    camera.position.set(stationCenter.x, DRONE_RADIUS + 4, stationCenter.z - 16);
 
     // ---- 배송 미션 ----
     const pickup = plazaBlocks[0] || { x: 0, z: 0 };
@@ -562,7 +604,8 @@ function startGame(mode) {
     drone.add(packageMesh);
 
     const delivery = { stage: 'pickup' };
-    setMissionText('배송 미션 · 픽업', '파란 구슬(픽업 지점)으로 이동하세요');
+    const CHARGE_RATE = 100 / 15; // 15초면 완전 충전
+    setMissionText('배송 미션 · 픽업', '스페이스로 이륙해서 파란 구슬(픽업 지점)으로 이동하세요');
     missionPanel.hidden = false;
 
     updateMissions = (dt) => {
@@ -570,6 +613,11 @@ function startGame(mode) {
       dropoffBeacon.rotation.y += dt;
       pickupBeacon.position.y = 8 + Math.sin(clock.elapsedTime * 2) * 0.4;
       dropoffBeacon.position.y = 8 + Math.sin(clock.elapsedTime * 2 + 1) * 0.4;
+
+      const distToStation = Math.hypot(drone.position.x - stationCenter.x, drone.position.z - stationCenter.z);
+      if (distToStation < CHARGE_PAD_RADIUS && drone.position.y < DRONE_RADIUS + 1.5 && state.battery < 100) {
+        state.battery = Math.min(100, state.battery + CHARGE_RATE * dt);
+      }
 
       if (delivery.stage === 'pickup') {
         const d = drone.position.distanceTo(pickupBeacon.position);
@@ -630,12 +678,17 @@ function startGame(mode) {
   // ---- 게임 루프 ----
   const clock = new THREE.Clock();
   const batteryFill = document.getElementById('batteryFill');
+  const batteryPercentEl = document.getElementById('batteryPercent');
   const altitudeFill = document.getElementById('altitudeFill');
   const speedReadout = document.getElementById('speedReadout');
 
   const desiredCamPos = new THREE.Vector3();
   const camLookTarget = new THREE.Vector3();
   const CAM_UP_AXIS = new THREE.Vector3(0, 1, 0);
+  const TILT_ANGLE = 0.35;
+  const yawQuat = new THREE.Quaternion();
+  const tiltQuat = new THREE.Quaternion();
+  const tiltEuler = new THREE.Euler();
 
   function updateDrone(dt) {
     if (state.crashed) return;
@@ -667,10 +720,16 @@ function startGame(mode) {
       state.velocity.y = Math.max(0, state.velocity.y);
     }
 
-    drone.rotation.y = state.yaw;
-    const tiltTarget = new THREE.Vector3(-rollInput * 0.35, 0, pitchInput * 0.35);
-    drone.rotation.z = THREE.MathUtils.lerp(drone.rotation.z, tiltTarget.x, 0.1);
-    drone.rotation.x = THREE.MathUtils.lerp(drone.rotation.x, tiltTarget.z, 0.1);
+    // 기울임(뱅킹)은 드론 "자기 몸통 기준" 회전이라, yaw로 이미 돌아간 뒤에
+    // 단순히 rotation.x/z를 직접 넣으면 요(yaw)가 0이 아닐 때 기울어지는
+    // 축이 화면 기준과 어긋난다. yaw 쿼터니언 * 로컬 기울임 쿼터니언 순서로
+    // 합성해야 어느 방향을 보고 있든 "왼쪽으로 이동 = 왼쪽으로 기욺"이 성립한다.
+    state.pitchTilt = THREE.MathUtils.lerp(state.pitchTilt, pitchInput * TILT_ANGLE, 0.15);
+    state.rollTilt = THREE.MathUtils.lerp(state.rollTilt, rollInput * TILT_ANGLE, 0.15);
+    tiltEuler.set(state.pitchTilt, 0, state.rollTilt);
+    tiltQuat.setFromEuler(tiltEuler);
+    yawQuat.setFromAxisAngle(CAM_UP_AXIS, state.yaw);
+    drone.quaternion.copy(yawQuat).multiply(tiltQuat);
 
     for (const r of rotors) {
       r.rotation.y += dt * (isMoving ? 40 : 18);
@@ -687,6 +746,7 @@ function startGame(mode) {
 
     const speedKmh = state.velocity.length() * 3.6;
     batteryFill.style.width = `${state.battery}%`;
+    batteryPercentEl.textContent = `${Math.round(state.battery)}%`;
     altitudeFill.style.width = `${Math.min(100, Math.max(0, drone.position.y / 70) * 100)}%`;
     speedReadout.textContent = `${speedKmh.toFixed(0)} km/h`;
   }
