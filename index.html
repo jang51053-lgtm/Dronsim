@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>드론 비행 시뮬레이션</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+
+    <div id="hud">
+      <div class="hud-bar">
+        <span class="hud-label">배터리</span>
+        <div class="hud-meter"><div id="batteryFill" class="hud-fill battery"></div></div>
+      </div>
+      <div class="hud-bar">
+        <span class="hud-label">고도</span>
+        <div class="hud-meter"><div id="altitudeFill" class="hud-fill altitude"></div></div>
+      </div>
+      <div id="speedReadout">0 km/h</div>
+    </div>
+
+    <div id="hint">PC 키보드: WASD 이동 · Q/E 회전 · Space/Shift 상승·하강 (아래 스틱으로도 조작 가능)</div>
+
+    <div id="controllerDock">
+      <div class="rc-body">
+        <div class="rc-antenna rc-antenna-left"></div>
+        <div class="rc-antenna rc-antenna-right"></div>
+
+        <div id="joystickLeft" class="joystick-zone">
+          <div class="joystick-base">
+            <div class="joystick-stick"></div>
+          </div>
+          <span class="stick-label">상승·하강 / 회전</span>
+        </div>
+
+        <div class="rc-screen">
+          <div id="fpvScreen">
+            <span class="fpv-placeholder">카메라 미장착</span>
+          </div>
+          <div class="rc-status-dot"></div>
+        </div>
+
+        <div id="joystickRight" class="joystick-zone">
+          <div class="joystick-base">
+            <div class="joystick-stick"></div>
+          </div>
+          <span class="stick-label">전후 · 좌우 이동</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+.claude/
+
+# 원본 에셋(용량 큰 fbx/obj 원본) - 실제 사용본은 public/assets 에 있음
+dron/
+map/
